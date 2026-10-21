@@ -1,0 +1,112 @@
+# CI/CD-Pipeline des Übungsprojekts. Jeder Abschnitt ist im Schnellkurs (CICD-Schnellkurs.md, Teil 3) erklärt.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]              # ein Tag wie v0.1.0 löst zusätzlich das Release aus
+  pull_request:               # jeder Pull Request wird geprüft, bevor er gemergt werden darf
+  workflow_dispatch:          # Knopf "Run workflow" im Actions-Tab
+  schedule:
+    - cron: "0 2 * * *"       # nächtlicher Lauf um 02:00 UTC
+
+# Ein neuer Push auf denselben Branch bricht den noch laufenden alten Lauf ab.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  unit-tests:
+    name: Unit-Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: lint
+    strategy:
+      fail-fast: false        # alle Kombinationen zu Ende laufen lassen, nicht beim ersten Fehler abbrechen
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pytest -m "not integration" --junitxml=report-unit.xml --cov=s7tools --cov-report=term-missing
+      - uses: actions/upload-artifact@v4
+        if: always()          # den Bericht auch hochladen, wenn Tests rot sind
+        with:
+          name: unit-report-${{ matrix.os }}-py${{ matrix.python }}
+          path: report-unit.xml
+
+  integration-tests:
+    name: Integrationstests gegen die simulierte SPS
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pytest -m integration --junitxml=report-integration.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-report
+          path: report-integration.xml
+
+  package:
+    name: Paket bauen (und bei einem Tag veröffentlichen)
+    needs: [unit-tests, integration-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # nötig, um ein GitHub-Release anzulegen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Release anlegen
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+
+  # So sähe ein Hardware-in-the-Loop-Job aus: Er läuft auf einem eigenen Rechner im Labor ("self-hosted runner"),
+  # an dem eine echte SPS hängt. Auskommentiert, weil du keinen solchen Runner hast; der Job würde sonst ewig warten.
+  #
+  # hil-tests:
+  #   name: HIL-Tests an der echten S7 (nur nachts)
+  #   if: github.event_name == 'schedule'
+  #   needs: integration-tests
+  #   runs-on: [self-hosted, windows, s7-1500]
+  #   concurrency: s7-1500-lab    # nur ein Lauf gleichzeitig an derselben Steuerung
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - run: pip install -e ".[dev]"
+  #     - run: pytest -m hil --plc-ip 192.168.0.10 --junitxml=report-hil.xml
