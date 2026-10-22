@@ -2,7 +2,7 @@
 
 import socket
 import struct
-!!!!XXXXX
+
 from s7tools.tpkt import HEADER, build_tpkt
 
 
