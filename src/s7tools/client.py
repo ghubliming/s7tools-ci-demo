@@ -2,6 +2,7 @@
 
 import socket
 import struct
+import os
 
 from s7tools.tpkt import HEADER, build_tpkt
 
