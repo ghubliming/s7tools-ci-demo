@@ -7,7 +7,7 @@ MAX_TOTAL = 0xFFFF
 
 
 def build_tpkt(payload: bytes) -> bytes:
-    total = len(payload) + HEADER + 1
+    total = len(payload) + HEADER
     if total > MAX_TOTAL:
         raise ValueError("payload too large")
     return struct.pack(">BBH", 3, 0, total) + payload
