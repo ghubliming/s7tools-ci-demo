@@ -10,7 +10,7 @@ def test_known_answer():
 @pytest.mark.parametrize(
     "payload", 
     [b"", b"\x02\xf0\x80", bytes(65531)], 
-    ids=["empty", "small", "max_rfc1006_boundary"]
+    ids=["empty", "small", "max_rfc1006_boundary"],
 )
 def test_roundtrip(payload):
     assert parse_tpkt(build_tpkt(payload)) == payload
